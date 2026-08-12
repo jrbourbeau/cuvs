@@ -137,6 +137,7 @@ class MilvusBackend(BenchmarkBackend):
         super().__init__(config)
         self.__client = None
         self.__data_type = None
+        self._network_error = None
 
     @property
     def algo(self) -> str:
@@ -174,11 +175,19 @@ class MilvusBackend(BenchmarkBackend):
     def _check_network_available(self) -> bool:
         try:
             self._client.list_collections()
+            self._network_error = None
             return True
         except ImportError:
             raise
-        except Exception:  # noqa: BLE001 - connectivity failures vary by transport
+        except Exception as error:  # noqa: BLE001 - errors vary by transport
+            self._network_error = str(error)
             return False
+
+    def _pre_flight_error(self, skip: str) -> str:
+        message = f"pre-flight check failed: {skip}"
+        if skip == "no_network" and self._network_error:
+            message += f" ({self._network_error})"
+        return message
 
     def _collection(self, index: IndexConfig) -> str:
         return self.config.get("collection", _safe_name(index.name))
@@ -205,7 +214,7 @@ class MilvusBackend(BenchmarkBackend):
 
         skip = self._pre_flight_check()
         if skip:
-            return self._failed_build(f"pre-flight check failed: {skip}")
+            return self._failed_build(self._pre_flight_error(skip))
         if self._client.has_collection(collection_name=collection):
             if not force:
                 result = self._build_result(
@@ -292,7 +301,7 @@ class MilvusBackend(BenchmarkBackend):
             ]
         skip = self._pre_flight_check()
         if skip:
-            return [self._failed_search(k, f"pre-flight check failed: {skip}")]
+            return [self._failed_search(k, self._pre_flight_error(skip))]
 
         queries = dataset.query_vectors
         if queries.size == 0:

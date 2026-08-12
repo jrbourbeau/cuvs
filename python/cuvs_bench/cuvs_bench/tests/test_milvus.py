@@ -64,6 +64,11 @@ class _Client:
         ]
 
 
+class _UnavailableClient:
+    def list_collections(self):
+        raise RuntimeError("connection refused")
+
+
 def _backend():
     backend = MilvusBackend(
         {
@@ -157,3 +162,13 @@ def test_dry_run_does_not_connect():
     )
     assert backend.build(_dataset(), [_index()], dry_run=True).success
     assert backend.search(_dataset(), [_index()], k=1, dry_run=True)[0].success
+
+
+def test_network_error_is_reported():
+    backend, _ = _backend()
+    backend._MilvusBackend__client = _UnavailableClient()
+    result = backend.build(_dataset(), [_index()])
+    assert not result.success
+    assert result.error_message == (
+        "pre-flight check failed: no_network (connection refused)"
+    )

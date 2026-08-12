@@ -7,7 +7,7 @@ services:
       ETCD_QUOTA_BACKEND_BYTES: "4294967296"
       ETCD_SNAPSHOT_COUNT: "50000"
     volumes:
-      - ./volumes/etcd:/etcd
+      - etcd-data:/etcd
     command: >-
       etcd -advertise-client-urls=http://etcd:2379
       -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
@@ -18,7 +18,7 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
     volumes:
-      - ./volumes/minio:/minio_data
+      - minio-data:/minio_data
     command: minio server /minio_data
 
   milvus:
@@ -30,10 +30,16 @@ services:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
     volumes:
-      - ./volumes/milvus:/var/lib/milvus
+      - milvus-data:/var/lib/milvus
     ports:
       - "19530:19530"
       - "9091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      start_period: 90s
+      timeout: 5s
+      retries: 30
     deploy:
       resources:
         reservations:
@@ -44,3 +50,8 @@ services:
     depends_on:
       - etcd
       - minio
+
+volumes:
+  etcd-data:
+  minio-data:
+  milvus-data:
