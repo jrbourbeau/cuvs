@@ -6,8 +6,9 @@ groups:
       intermediate_graph_degree: [128]
       graph_degree: [16, 32, 64]
     search:
-      itopk_size: [16, 32, 64, 128, 256, 512]
-      search_width: [1, 2, 4, 8, 16, 32]
+      itopk_size: [16, 32, 64, 128, 256]
+      search_width: [1, 2, 4, 8]
+      max_iterations: [1, 2, 4, 8, 16, 0]
   test:
     build:
       intermediate_graph_degree: [64]
