@@ -49,6 +49,7 @@ requirements:
     - matplotlib-base>=3.9
     - opensearch-py>=2.4.0
     - pandas
+    - pymilvus>=3.0.1
     - pylibraft =${{ minor_version }}
     - python
     - pyyaml

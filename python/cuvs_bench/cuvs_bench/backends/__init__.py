@@ -11,39 +11,37 @@ and network-based VDB services.
 """
 
 from .base import (
-    Dataset,
-    BuildResult,
-    SearchResult,
     BenchmarkBackend,
+    BuildResult,
+    Dataset,
+    SearchResult,
 )
-
+from .cpp_gbench import CppGoogleBenchmarkBackend
+from .milvus import MilvusBackend
+from .opensearch import OpenSearchBackend
 from .registry import (
     BackendRegistry,
+    get_backend,
     get_registry,
     register_backend,
-    get_backend,
 )
-
-from .cpp_gbench import CppGoogleBenchmarkBackend
-from .opensearch import OpenSearchBackend
 
 # Auto-register built-in backends
 _registry = get_registry()
 _registry.register("cpp_gbench", CppGoogleBenchmarkBackend)
+_registry.register("milvus", MilvusBackend)
 _registry.register("opensearch", OpenSearchBackend)
 
 __all__ = [
-    # Base classes and data structures
-    "Dataset",
-    "BuildResult",
-    "SearchResult",
-    "BenchmarkBackend",
-    # Registry
     "BackendRegistry",
+    "BenchmarkBackend",
+    "BuildResult",
+    "CppGoogleBenchmarkBackend",
+    "Dataset",
+    "MilvusBackend",
+    "OpenSearchBackend",
+    "SearchResult",
+    "get_backend",
     "get_registry",
     "register_backend",
-    "get_backend",
-    # Built-in backends
-    "CppGoogleBenchmarkBackend",
-    "OpenSearchBackend",
 ]

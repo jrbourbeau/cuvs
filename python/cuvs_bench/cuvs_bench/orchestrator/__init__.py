@@ -3,30 +3,34 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-from .orchestrator import BenchmarkOrchestrator
-from .config_loaders import ConfigLoader, BenchmarkConfig, DatasetConfig, CppGBenchConfigLoader
+from ..backends.milvus import MilvusConfigLoader
+from ..backends.opensearch import OpenSearchConfigLoader
 from ..backends.registry import (
     get_backend_class,
+    get_config_loader,
     list_backends,
     register_config_loader,
-    get_config_loader,
 )
-from ..backends.opensearch import OpenSearchConfigLoader
+from .config_loaders import (
+    BenchmarkConfig,
+    ConfigLoader,
+    CppGBenchConfigLoader,
+    DatasetConfig,
+)
+from .orchestrator import BenchmarkOrchestrator
 
 __all__ = [
-    # Main orchestrator
-    "BenchmarkOrchestrator",
-    # Config loaders
-    "ConfigLoader",
     "BenchmarkConfig",
-    "DatasetConfig",
+    "BenchmarkOrchestrator",
+    "ConfigLoader",
     "CppGBenchConfigLoader",
+    "DatasetConfig",
+    "MilvusConfigLoader",
     "OpenSearchConfigLoader",
-    # Registry functions
     "get_backend_class",
+    "get_config_loader",
     "list_backends",
     "register_config_loader",
-    "get_config_loader",
 ]
 
 
@@ -34,9 +38,11 @@ __all__ = [
 # Register built-in config loaders
 # ============================================================================
 
+
 def _register_builtin_loaders():
     """Register built-in config loaders."""
     register_config_loader("cpp_gbench", CppGBenchConfigLoader)
+    register_config_loader("milvus", MilvusConfigLoader)
     register_config_loader("opensearch", OpenSearchConfigLoader)
 
 

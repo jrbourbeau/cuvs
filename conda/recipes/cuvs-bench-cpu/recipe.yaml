@@ -96,6 +96,7 @@ requirements:
     - numpy >=2.0,<3.0
     - opensearch-py>=2.4.0
     - pandas
+    - pymilvus>=3.0.1
     - pyyaml
     - python
     - requests

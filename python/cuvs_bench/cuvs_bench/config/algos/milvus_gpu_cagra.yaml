@@ -1,0 +1,17 @@
+# Milvus GPU_CAGRA benchmark configuration.
+name: milvus_gpu_cagra
+groups:
+  base:
+    build:
+      intermediate_graph_degree: [128]
+      graph_degree: [32, 64]
+    search:
+      itopk_size: [64, 128, 256]
+      search_width: [1, 2, 4]
+  test:
+    build:
+      intermediate_graph_degree: [64]
+      graph_degree: [32]
+    search:
+      itopk_size: [64]
+      search_width: [1]
