@@ -23,7 +23,7 @@ python -m cuvs_bench.run \
   --backend-config deploy/milvus/backend.yaml \
   --algorithms milvus_gpu_cagra \
   --count 10 --batch-size 10000 --search-mode latency \
-  --groups test --build --search
+  --groups test --build --search --force
 python -m cuvs_bench.plot \
   --dataset sift-128-euclidean \
   --dataset-path ${PWD}/datasets \
