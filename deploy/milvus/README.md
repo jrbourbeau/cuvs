@@ -11,9 +11,12 @@ small end-to-end benchmark before starting a full parameter sweep:
 
 ```bash
 uv pip install \
-  click matplotlib pandas pyyaml requests 'scikit-learn>=1.5' \
+  click h5py matplotlib pandas pyyaml requests scipy 'scikit-learn>=1.5' \
   'pymilvus>=3.0.1'
 RAPIDS_DISABLE_CUDA=true uv pip install --no-deps -e python/cuvs_bench
+python -m cuvs_bench.get_dataset \
+  --dataset sift-128-euclidean \
+  --dataset-path ${PWD}/datasets
 python -m cuvs_bench.run \
   --dataset sift-128-euclidean \
   --dataset-path ${PWD}/datasets \
@@ -21,6 +24,12 @@ python -m cuvs_bench.run \
   --algorithms milvus_gpu_cagra \
   --count 10 --batch-size 10000 --search-mode latency \
   --groups test --build --search
+python -m cuvs_bench.plot \
+  --dataset sift-128-euclidean \
+  --dataset-path ${PWD}/datasets \
+  --algorithms milvus_gpu_cagra \
+  --groups test --count 10 --batch-size 10000 \
+  --raw --output-filepath ${PWD}/datasets
 ```
 
 `--no-deps` uses cuVS and the common benchmark dependencies from the active
@@ -32,6 +41,11 @@ option disables GPU support in Milvus.
 Before benchmarking, `docker compose -f deploy/milvus/docker-compose.yml ps`
 should report the `milvus` service as healthy. If startup fails, inspect it with
 `docker compose -f deploy/milvus/docker-compose.yml logs milvus`.
+
+The final command writes the build and search plot PNGs to `datasets/`.
+The deployment disables automatic compaction; cuvs-bench instead force-merges
+each collection after ingestion and includes that work in the measured build
+time. Collections are released from GPU memory after their searches finish.
 
 Remove `--groups test` to run the default GPU_CAGRA sweep. Stop the deployment
 with `docker compose -f deploy/milvus/docker-compose.yml down`. Docker-managed

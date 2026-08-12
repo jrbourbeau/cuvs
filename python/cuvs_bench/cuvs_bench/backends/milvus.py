@@ -129,6 +129,8 @@ _METRICS = {
     "innerproduct": "IP",
 }
 
+_COMPACTION_TIMEOUT_SECONDS = 3600
+
 
 class MilvusBackend(BenchmarkBackend):
     """Benchmark Milvus GPU indexes through ``pymilvus.MilvusClient``."""
@@ -137,6 +139,7 @@ class MilvusBackend(BenchmarkBackend):
         super().__init__(config)
         self.__client = None
         self.__data_type = None
+        self._loaded_collections = set()
         self._network_error = None
 
     @property
@@ -169,8 +172,40 @@ class MilvusBackend(BenchmarkBackend):
 
     def cleanup(self) -> None:
         if self.__client is not None:
-            self.__client.close()
-            self.__client = None
+            try:
+                for collection in self._loaded_collections:
+                    self.__client.release_collection(
+                        collection_name=collection
+                    )
+            finally:
+                self._loaded_collections.clear()
+                self.__client.close()
+                self.__client = None
+
+    def _load_collection(self, collection: str) -> None:
+        if collection not in self._loaded_collections:
+            self._client.load_collection(collection_name=collection)
+            self._loaded_collections.add(collection)
+
+    def _force_merge(self, collection: str) -> None:
+        job_id = self._client.compact(
+            collection_name=collection, target_size=(1 << 63) - 1
+        )
+        deadline = time.monotonic() + _COMPACTION_TIMEOUT_SECONDS
+        while True:
+            state = self._client.get_compaction_state(job_id=job_id)
+            if state == "Completed":
+                return
+            if state not in {"Executing", "UndefinedState", "UndefiedState"}:
+                raise RuntimeError(
+                    f"Milvus compaction {job_id} entered state {state!r}"
+                )
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Milvus compaction {job_id} did not finish within "
+                    f"{_COMPACTION_TIMEOUT_SECONDS} seconds"
+                )
+            time.sleep(1)
 
     def _check_network_available(self) -> bool:
         try:
@@ -259,6 +294,7 @@ class MilvusBackend(BenchmarkBackend):
                 ],
             )
         self._client.flush(collection_name=collection)
+        self._force_merge(collection)
         params = self._client.prepare_index_params()
         params.add_index(
             field_name="vector",
@@ -269,7 +305,7 @@ class MilvusBackend(BenchmarkBackend):
         self._client.create_index(
             collection_name=collection, index_params=params, sync=True
         )
-        self._client.load_collection(collection_name=collection)
+        self._load_collection(collection)
         return self._build_result(
             collection, index.build_param, time.perf_counter() - start, True
         )
@@ -314,6 +350,7 @@ class MilvusBackend(BenchmarkBackend):
                     f"Milvus GPU indexes do not support {dataset.distance_metric!r}",
                 )
             ]
+        self._load_collection(collection)
         results = []
         for params in combinations:
             neighbors = np.full((len(queries), k), -1, dtype=np.int64)

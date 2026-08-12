@@ -1,0 +1,3 @@
+dataCoord:
+  compaction:
+    enableAutoCompaction: false

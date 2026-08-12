@@ -46,6 +46,14 @@ class _Client:
     def flush(self, **kwargs):
         self.calls.append(("flush", kwargs))
 
+    def compact(self, **kwargs):
+        self.calls.append(("compact", kwargs))
+        return 42
+
+    def get_compaction_state(self, **kwargs):
+        self.calls.append(("get_compaction_state", kwargs))
+        return "Completed"
+
     def prepare_index_params(self):
         self.index_params = _Builder()
         return self.index_params
@@ -55,6 +63,12 @@ class _Client:
 
     def load_collection(self, **kwargs):
         self.calls.append(("load_collection", kwargs))
+
+    def release_collection(self, **kwargs):
+        self.calls.append(("release_collection", kwargs))
+
+    def close(self):
+        self.calls.append(("close", {}))
 
     def search(self, **kwargs):
         self.calls.append(("search", kwargs))
@@ -141,6 +155,13 @@ def test_build_creates_gpu_cagra_index():
     assert result.index_path == "test_collection"
     assert client.index_params.indexes[0]["index_type"] == "GPU_CAGRA"
     assert len([call for call in client.calls if call[0] == "insert"]) == 3
+    calls = [call[0] for call in client.calls]
+    assert calls.index("flush") < calls.index("compact")
+    assert calls.index("compact") < calls.index("get_compaction_state")
+    assert calls.index("get_compaction_state") < calls.index("create_index")
+    assert client.calls[calls.index("compact")][1]["target_size"] == (
+        1 << 63
+    ) - 1
 
 
 def test_search_returns_neighbor_arrays():
@@ -150,10 +171,23 @@ def test_search_returns_neighbor_arrays():
     assert result.neighbors.shape == (3, 1)
     search_calls = [call for call in client.calls if call[0] == "search"]
     assert len(search_calls) == 2
+    assert client.calls.index(search_calls[0]) > [
+        call[0] for call in client.calls
+    ].index("load_collection")
     assert search_calls[0][1]["search_params"] == {
         "metric_type": "L2",
         "params": {"itopk_size": 64, "search_width": 1},
     }
+
+
+def test_cleanup_releases_loaded_collection():
+    backend, client = _backend()
+    backend.build(_dataset(), [_index()])
+    backend.cleanup()
+    assert client.calls[-2:] == [
+        ("release_collection", {"collection_name": "test_collection"}),
+        ("close", {}),
+    ]
 
 
 def test_dry_run_does_not_connect():
