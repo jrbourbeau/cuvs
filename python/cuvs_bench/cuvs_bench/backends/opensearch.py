@@ -12,9 +12,9 @@ which offloads Faiss HNSW graph construction to a GPU-accelerated external servi
 https://docs.opensearch.org/latest/vector-search/remote-index-build/
 """
 
-import json
 import os
 import time
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -131,6 +131,7 @@ class OpenSearchConfigLoader(ConfigLoader):
             "use_ssl",
             "verify_certs",
             "build_batch_size",
+            "ingest_threads",
             "approximate_threshold",
             "refresh_interval",
             "force_merge",
@@ -290,13 +291,14 @@ class OpenSearchBackend(BenchmarkBackend):
         - ``verify_certs`` – verify SSL certs (default: ``False``)
         - ``build_batch_size`` – vectors per bulk request. If omitted, choose
           a batch size with roughly 1 MiB of raw vector data.
+        - ``ingest_threads`` – concurrent bulk request threads (default: ``1``).
         - ``approximate_threshold`` – minimum vectors per segment before
           building ANN data structures (default: OpenSearch's default).
         - ``refresh_interval`` – how often OpenSearch refreshes the index,
           e.g. ``"1s"`` or ``"-1"`` to disable automatic refreshes during
           ingestion (default: OpenSearch's default).
         - ``force_merge`` – merge each shard down to one segment after
-          ingestion and flush complete (default: ``False``).
+          ingestion and flush complete (default: ``True``).
         - ``requires_network`` – trigger network pre-flight check (default: ``True``)
         - ``remote_index_build`` – set ``index.knn.remote_index_build.enabled=true``
           on the index at creation time, opting it into the GPU build path (default: ``False``).
@@ -331,6 +333,9 @@ class OpenSearchBackend(BenchmarkBackend):
             password = self.config.get("password", "admin")
             use_ssl = self.config.get("use_ssl", False)
             verify_certs = self.config.get("verify_certs", False)
+            ingest_threads = int(self.config.get("ingest_threads", 1))
+            if ingest_threads < 1:
+                raise ValueError("ingest_threads must be at least 1")
 
             self.__client = OpenSearch(
                 hosts=[{"host": host, "port": port}],
@@ -338,6 +343,7 @@ class OpenSearchBackend(BenchmarkBackend):
                 use_ssl=use_ssl,
                 verify_certs=verify_certs,
                 timeout=None,
+                pool_maxsize=max(10, ingest_threads),
             )
         return self.__client
 
@@ -466,60 +472,54 @@ class OpenSearchBackend(BenchmarkBackend):
         index_name: str,
         vectors: np.ndarray,
         build_batch_size: Optional[int] = None,
+        ingest_threads: int = 1,
     ) -> None:
         """
         Bulk-index vectors into index_name using the bulk API.
 
         Vectors are stored under the ``"vector"`` field with their integer
         row index as the document ``_id`` so they can be mapped back to
-        dataset and ground-truth neighbor IDs.
+        dataset and ground-truth neighbor IDs. ``parallel_bulk`` bounds the
+        work queue and sends up to ``ingest_threads`` requests concurrently.
         """
+        from opensearchpy.helpers import parallel_bulk
+
         if build_batch_size is None:
             vector_size_bytes = vectors[0].nbytes
             build_batch_size = max(1, (1024 * 1024) // vector_size_bytes)
+        if build_batch_size < 1:
+            raise ValueError("build_batch_size must be at least 1")
+        if ingest_threads < 1:
+            raise ValueError("ingest_threads must be at least 1")
 
         total = vectors.shape[0]
-        indexed = 0
-        progress_step = max(total / 10.0, 1.0)
-        next_progress = progress_step
 
-        for batch_start in range(0, total, build_batch_size):
-            batch_end = min(batch_start + build_batch_size, total)
-            body_lines = []
+        def actions():
+            for doc_id, vector in enumerate(vectors):
+                yield {
+                    "_op_type": "index",
+                    "_index": index_name,
+                    "_id": str(doc_id),
+                    "_source": {"vector": vector.tolist()},
+                }
 
-            for doc_id, vec in enumerate(
-                vectors[batch_start:batch_end],
-                start=batch_start,
-            ):
-                body_lines.append(json.dumps({"index": {"_id": str(doc_id)}}))
-                body_lines.append(json.dumps({"vector": vec.tolist()}))
-
-            response = self._client.bulk(
-                index=index_name,
-                body="\n".join(body_lines) + "\n",
+        print(
+            f"  Indexing {total} vectors with {ingest_threads} "
+            "bulk request thread(s)"
+        )
+        deque(
+            parallel_bulk(
+                client=self._client,
+                actions=actions(),
+                thread_count=ingest_threads,
+                chunk_size=build_batch_size,
+                queue_size=max(4, ingest_threads),
                 request_timeout=120,
-                headers={"Content-Type": "application/x-ndjson"},
-            )
-            if response.get("errors"):
-                failures = [
-                    item["index"]
-                    for item in response.get("items", [])
-                    if item.get("index", {}).get("error")
-                ]
-                first_failure = failures[0] if failures else response
-                raise RuntimeError(
-                    "Failed to bulk-index "
-                    f"{len(failures)} document(s): {first_failure}"
-                )
-
-            indexed += batch_end - batch_start
-            if indexed >= next_progress or indexed == total:
-                print(
-                    f"  Indexed {indexed} / {total} vectors "
-                    f"(~{100 * indexed // total}%)"
-                )
-                while next_progress <= indexed:
-                    next_progress += progress_step
+                raise_on_error=True,
+                raise_on_exception=True,
+            ),
+            maxlen=0,
+        )
 
         print(f"  Indexed all {total} vectors")
 
@@ -757,11 +757,12 @@ class OpenSearchBackend(BenchmarkBackend):
         index_name = self._resolve_index_name(index_cfg)
         engine = self.config.get("engine", "lucene")
         build_batch_size = self.config.get("build_batch_size")
+        ingest_threads = int(self.config.get("ingest_threads", 1))
         remote_index_build = bool(self.config.get("remote_index_build", False))
         remote_build_size_min = self.config.get("remote_build_size_min")
         approximate_threshold = self.config.get("approximate_threshold")
         refresh_interval = self.config.get("refresh_interval")
-        force_merge = bool(self.config.get("force_merge", False))
+        force_merge = bool(self.config.get("force_merge", True))
 
         if dry_run:
             print(
@@ -834,18 +835,40 @@ class OpenSearchBackend(BenchmarkBackend):
 
         # Bulk index, then flush segments before timing build completion.
         t0 = time.perf_counter()
-        self._bulk_index(index_name, base_vectors, build_batch_size)
+        ingest_start = t0
+        self._bulk_index(
+            index_name,
+            base_vectors,
+            build_batch_size,
+            ingest_threads,
+        )
+        ingest_time = time.perf_counter() - ingest_start
+
+        flush_start = time.perf_counter()
         self._flush_index(index_name)
+        flush_time = time.perf_counter() - flush_start
+
+        remote_build_wait_time = 0.0
         if remote_index_build:
+            remote_build_wait_start = time.perf_counter()
             self._wait_for_remote_build(
                 initial_stats=pre_ingest_stats,
                 timeout=remote_timeout,
             )
+            remote_build_wait_time = (
+                time.perf_counter() - remote_build_wait_start
+            )
+
+        force_merge_time = 0.0
         if force_merge:
+            force_merge_start = time.perf_counter()
             self._force_merge_index(index_name)
+            force_merge_time = time.perf_counter() - force_merge_start
         build_time = time.perf_counter() - t0
 
+        refresh_start = time.perf_counter()
         self._client.indices.refresh(index=index_name, request_timeout=120)
+        refresh_time = time.perf_counter() - refresh_start
 
         # Index size
         stats = self._client.indices.stats(index=index_name)
@@ -864,6 +887,18 @@ class OpenSearchBackend(BenchmarkBackend):
                 "engine": engine,
                 "space_type": space_type,
                 "remote_index_build": remote_index_build,
+                "ingest_threads": ingest_threads,
+                "indexed_vectors": int(base_vectors.shape[0]),
+                "ingest_time_seconds": ingest_time,
+                "flush_time_seconds": flush_time,
+                "remote_build_wait_time_seconds": remote_build_wait_time,
+                "force_merge_time_seconds": force_merge_time,
+                "refresh_time_seconds": refresh_time,
+                "ingest_vectors_per_second": (
+                    base_vectors.shape[0] / ingest_time
+                    if ingest_time > 0
+                    else 0.0
+                ),
                 "approximate_threshold": approximate_threshold,
                 "refresh_interval": refresh_interval,
                 "force_merge": force_merge,

@@ -18,8 +18,27 @@ _METADATA_COLUMNS = {
     "batch_size",
     "build time",
     "engine",
+    "flush_time_seconds",
+    "force_merge_time_seconds",
+    "indexed_vectors",
+    "ingest_threads",
+    "ingest_time_seconds",
+    "ingest_vectors_per_second",
     "num_batches",
+    "refresh_time_seconds",
+    "remote_build_wait_time_seconds",
     "space_type",
+}
+
+_BUILD_METADATA_COLUMNS = {
+    "indexed_vectors": "vectors",
+    "ingest_threads": "threads",
+    "ingest_time_seconds": "ingest_s",
+    "ingest_vectors_per_second": "vectors/s",
+    "flush_time_seconds": "flush_s",
+    "remote_build_wait_time_seconds": "remote_wait_s",
+    "force_merge_time_seconds": "merge_s",
+    "refresh_time_seconds": "refresh_s",
 }
 
 
@@ -44,6 +63,7 @@ def print_results(
     group_names = [
         group.strip() for group in groups.split(",") if group.strip()
     ]
+    build_metadata = []
 
     print("\nBuild results:")
     for group in group_names:
@@ -51,7 +71,8 @@ def print_results(
         if not build_file.exists():
             print(f"  [{group}] no build results")
             continue
-        for _, row in pd.read_csv(build_file).iterrows():
+        build = pd.read_csv(build_file)
+        for _, row in build.iterrows():
             params = _format_params(
                 row, _BUILD_COLUMNS | _METADATA_COLUMNS
             )
@@ -59,6 +80,37 @@ def print_results(
                 f"  {row['algo_name']} index={row['index_name']} "
                 f"time={float(row['time']):.2f}s params={params}"
             )
+
+        metadata_columns = [
+            column
+            for column in _BUILD_METADATA_COLUMNS
+            if column in build.columns
+        ]
+        if metadata_columns:
+            metadata = build[["index_name", *metadata_columns]].copy()
+            metadata.insert(0, "group", group)
+            build_metadata.append(metadata)
+
+    print("\nBuild metadata:")
+    if not build_metadata:
+        print("  no build metadata")
+    else:
+        metadata = pd.concat(build_metadata, ignore_index=True).rename(
+            columns=_BUILD_METADATA_COLUMNS
+        )
+        formatters = {
+            "vectors": lambda value: f"{int(value):,}",
+            "threads": lambda value: f"{int(value)}",
+            "vectors/s": lambda value: f"{float(value):,.1f}",
+        }
+        formatters.update(
+            {
+                column: lambda value: f"{float(value):.3f}"
+                for column in metadata.columns
+                if column.endswith("_s")
+            }
+        )
+        print(metadata.to_string(index=False, formatters=formatters))
 
     print("\nSearch results:")
     for group in group_names:

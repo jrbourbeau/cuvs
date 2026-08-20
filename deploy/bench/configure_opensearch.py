@@ -33,6 +33,10 @@ def create_backend_config() -> dict:
     if number_of_shards < 1:
         raise ValueError("NUMBER_OF_SHARDS must be at least 1")
 
+    ingest_threads = int(os.environ.get("INGEST_THREADS", "1"))
+    if ingest_threads < 1:
+        raise ValueError("INGEST_THREADS must be at least 1")
+
     approximate_threshold = _optional_int("APPROXIMATE_THRESHOLD")
     if approximate_threshold is not None and approximate_threshold < -1:
         raise ValueError("APPROXIMATE_THRESHOLD must be -1 or greater")
@@ -44,8 +48,9 @@ def create_backend_config() -> dict:
         "use_ssl": False,
         "verify_certs": False,
         "number_of_shards": number_of_shards,
+        "ingest_threads": ingest_threads,
         "remote_index_build": remote_index_build,
-        "force_merge": _bool("FORCE_MERGE"),
+        "force_merge": _bool("FORCE_MERGE", default=True),
     }
     if approximate_threshold is not None:
         config["approximate_threshold"] = approximate_threshold

@@ -330,10 +330,11 @@ export BENCH_GROUPS=test
 export K=10
 export BATCH_SIZE=
 export BUILD_BATCH_SIZE=
+export INGEST_THREADS=1
 export NUMBER_OF_SHARDS=1
 export APPROXIMATE_THRESHOLD=
-export REFRESH_INTERVAL=
-export FORCE_MERGE=false
+export REFRESH_INTERVAL=-1
+export FORCE_MERGE=true
 
 mkdir -p "${DATASET_PATH}"
 

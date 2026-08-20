@@ -81,28 +81,33 @@ export BENCH_GROUPS=test                   # test | base (default: test)
 export K=10                                # number of neighbors (default: 10)
 export BATCH_SIZE=                         # optional query batch size override
 export BUILD_BATCH_SIZE=                   # optional bulk ingest batch size override
+export INGEST_THREADS=1                    # concurrent bulk requests (default: 1)
 export NUMBER_OF_SHARDS=1                  # number of primary index shards (default: 1)
 export APPROXIMATE_THRESHOLD=              # optional vectors per segment before ANN build
-export REFRESH_INTERVAL=                   # optional index refresh interval (for example: 30s or -1)
-export FORCE_MERGE=false                   # optionally merge each shard to one segment
+export REFRESH_INTERVAL=-1                 # disable automatic refresh during bulk ingest
+export FORCE_MERGE=true                    # merge each shard to one segment (default: true)
 export REMOTE_BUILD_TIMEOUT=1800           # seconds to wait for remote builds (default: 1800)
 ```
 
 When set, `APPROXIMATE_THRESHOLD` sets
 `index.knn.advanced.approximate_threshold` on each benchmark index. Leave it
-empty to use OpenSearch's default. AWS recommends `10000` as a starting point
-for GPU-accelerated indexing so smaller segments do not build ANN structures
-prematurely. Set it to `0` to always build ANN structures or `-1` to disable
-them.
+empty to use OpenSearch's default. Set it to `0` to always build ANN structures
+or `-1` to disable them.
 
 `REFRESH_INTERVAL` sets `index.refresh_interval` on each benchmark index.
-Leave it empty to use the OpenSearch default, or set it to `-1` to disable
-automatic refreshes during ingestion. cuvs-bench performs an explicit refresh
-before searching.
+The deployment default is `-1`, which disables automatic refreshes during
+ingestion and prevents small segment creation. cuvs-bench performs an explicit
+refresh before searching.
 
-Set `FORCE_MERGE=true` to merge every primary shard down to one segment after
-ingestion and flush complete. The force-merge time is included in the reported
-build time. It is disabled by default.
+`INGEST_THREADS` controls the number of concurrent bulk requests issued by
+the OpenSearch Python client. Start with the default of `1`, then benchmark
+`2`, `4`, `8`, and `16`; stop increasing it when throughput plateaus or
+OpenSearch begins rejecting writes.
+
+By default, `FORCE_MERGE=true` merges every primary shard down to one segment
+after ingestion and flush complete. The force-merge time is included in the
+reported build time. Set it to `false` to retain OpenSearch's naturally created
+segment layout.
 
 Start all services:
 
@@ -152,10 +157,12 @@ docker compose down -v
    - Creates the kNN index and bulk-ingests dataset vectors
    - **GPU mode**: Flushes segments, waits for all submitted remote GPU builds to complete, and polls the kNN stats API every 5 s until the build is confirmed complete
    - **CPU mode**: Flushes and refreshes the local OpenSearch index
-   - Uses the backend's automatic OpenSearch bulk-ingest batch sizing by default; set `BUILD_BATCH_SIZE` to override it
-   - Records total build time in the result
+   - Uses `parallel_bulk` with `INGEST_THREADS` concurrent requests and automatic bulk sizing unless `BUILD_BATCH_SIZE` is set
+   - Records total build time plus ingestion, flush, remote-build wait,
+     force-merge, and refresh phase timings and ingestion throughput
    - Computes recall for each search-parameter set and writes the Python-backend results directly to the plotting CSV schema
-5. Prints a compact build-time and search recall/QPS/latency overview
+5. Prints a compact build-time overview, a table of build phase metadata, and
+   search recall/QPS/latency results
 6. Generates recall vs. latency/throughput plots as PNGs in `$DATASET_PATH` (`cuvs_bench.plot`)
 
 ## Dataset format
@@ -239,6 +246,7 @@ docker compose down -v
 ```
 
 Keep `DATASET`, `BENCH_GROUPS`, `K`, `BATCH_SIZE`, `BUILD_BATCH_SIZE`,
+`INGEST_THREADS`,
 `NUMBER_OF_SHARDS`, `APPROXIMATE_THRESHOLD`, and `REFRESH_INTERVAL` unchanged
 between the two runs. The force-merge call is synchronous and its time is
 included in the reported build time for both modes.
